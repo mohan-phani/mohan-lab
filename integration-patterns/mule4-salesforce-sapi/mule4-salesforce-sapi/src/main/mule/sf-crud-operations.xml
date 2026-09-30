@@ -1,0 +1,409 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+      xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+        http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd">
+
+    <description>
+        Universal CRUD Operations — sObject-agnostic endpoints for
+        create, retrieve, update, upsert, and delete operations.
+        Each endpoint accepts any sObject type via path/body parameter.
+    </description>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         POST /records/{sObjectType} — Create Record(s)
+         Body: single object or array of objects (auto-detects)
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="post:\records\(sObjectType):application\json:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <set-variable variableName="sObjectType" value="#[attributes.uriParams.sObjectType]" />
+
+        <validation:is-not-blank-string
+            value="#[vars.sObjectType default '']"
+            message="sObjectType path parameter is required" />
+
+        <!-- Determine single vs multi-record create -->
+        <choice>
+            <when expression="#[payload is Array]">
+                <!-- Bulk auto-route: if array size exceeds threshold, use bulk API v2 -->
+                <choice>
+                    <when expression="#[sizeOf(payload) > (p('bulk.auto-route.threshold') as Number default 200)]">
+                        <flow-ref name="sf-bulk-create-subflow" />
+                    </when>
+                    <otherwise>
+                        <!-- Multi-record create using standard connector -->
+                        <ee:transform>
+                            <ee:message>
+                                <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+payload map ((item) -> {
+    (item - "attributes" - "type")
+})]]></ee:set-payload>
+                            </ee:message>
+                        </ee:transform>
+
+                        <salesforce:create config-ref="salesforce-config" type="#[vars.sObjectType]" />
+                    </otherwise>
+                </choice>
+            </when>
+            <otherwise>
+                <!-- Single record create -->
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+[payload - "attributes" - "type"]]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+
+                <salesforce:create config-ref="salesforce-config" type="#[vars.sObjectType]" />
+            </otherwise>
+        </choice>
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("create", vars.sObjectType, payload, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="httpStatus"><![CDATA[201]]></ee:set-variable>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'create', vars.sObjectType, sizeOf(payload.data default []), vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /records/{sObjectType}/{recordId} — Retrieve by ID
+         Query params: ?fields=Id,Name,... (optional, default all)
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\records\(sObjectType)\(recordId):sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <set-variable variableName="sObjectType" value="#[attributes.uriParams.sObjectType]" />
+        <set-variable variableName="recordId" value="#[attributes.uriParams.recordId]" />
+        <set-variable variableName="requestedFields"
+                      value="#[attributes.queryParams.fields default '']" />
+
+        <validation:is-not-blank-string
+            value="#[vars.recordId default '']"
+            message="recordId path parameter is required" />
+
+        <!-- Build dynamic SOQL for retrieve -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="retrieveQuery"><![CDATA[%dw 2.0
+output application/java
+var fields = if (isEmpty(vars.requestedFields)) "FIELDS(ALL)"
+             else vars.requestedFields
+---
+"SELECT " ++ fields ++ " FROM " ++ vars.sObjectType ++ " WHERE Id = '" ++ vars.recordId ++ "' LIMIT 1"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <salesforce:query config-ref="salesforce-config">
+            <salesforce:salesforce-query>#[vars.retrieveQuery]</salesforce:salesforce-query>
+        </salesforce:query>
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <!-- Check if record found -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="resultList"><![CDATA[%dw 2.0
+output application/java
+---
+payload]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <choice>
+            <when expression="#[isEmpty(vars.resultList)]">
+                <raise-error type="SALESFORCE:NOT_FOUND"
+                             description="#[vars.sObjectType ++ ' with Id ' ++ vars.recordId ++ ' not found']" />
+            </when>
+        </choice>
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("retrieve", vars.sObjectType,
+    cleanSfdcRecord(vars.resultList[0]),
+    correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'retrieve', vars.sObjectType, 1, vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         PATCH /records/{sObjectType}/{recordId} — Update Record
+         Body: { "Name": "New Name", ... } (fields to update)
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="patch:\records\(sObjectType)\(recordId):application\json:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <set-variable variableName="sObjectType" value="#[attributes.uriParams.sObjectType]" />
+        <set-variable variableName="recordId" value="#[attributes.uriParams.recordId]" />
+
+        <validation:is-not-blank-string
+            value="#[vars.recordId default '']"
+            message="recordId path parameter is required" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+[payload ++ { Id: vars.recordId } - "attributes" - "type"]]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <salesforce:update config-ref="salesforce-config" type="#[vars.sObjectType]" />
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("update", vars.sObjectType, payload, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'update', vars.sObjectType, 1, vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         PUT /records/{sObjectType}/upsert — Upsert Record(s)
+         Body: { "externalIdField": "External_Id__c", "records": [...] }
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="put:\records\(sObjectType)\upsert:application\json:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <set-variable variableName="sObjectType" value="#[attributes.uriParams.sObjectType]" />
+        <set-variable variableName="externalIdField"
+                      value="#[payload.externalIdField default 'Id']" />
+
+        <validation:is-not-blank-string
+            value="#[vars.externalIdField default '']"
+            message="externalIdField is required for upsert" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var records = if (payload.records is Array) payload.records else [payload.records]
+---
+records map ((item) -> item - "attributes" - "type")]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <salesforce:upsert config-ref="salesforce-config"
+                           type="#[vars.sObjectType]"
+                           externalIdFieldName="#[vars.externalIdField]" />
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("upsert", vars.sObjectType, payload, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'upsert', vars.sObjectType, sizeOf(payload.data default []), vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         DELETE /records/{sObjectType}/{recordId} — Delete Record
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="delete:\records\(sObjectType)\(recordId):sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <set-variable variableName="sObjectType" value="#[attributes.uriParams.sObjectType]" />
+        <set-variable variableName="recordId" value="#[attributes.uriParams.recordId]" />
+
+        <validation:is-not-blank-string
+            value="#[vars.recordId default '']"
+            message="recordId path parameter is required" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+[vars.recordId]]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <salesforce:delete config-ref="salesforce-config" />
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("delete", vars.sObjectType,
+    { id: vars.recordId, deleted: true },
+    correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'delete', vars.sObjectType, 1, vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         POST /records/{sObjectType}/merge — Merge Records
+         Body: { "masterId": "001xx...", "victimIds": ["001yy..."] }
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="post:\records\(sObjectType)\merge:application\json:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <set-variable variableName="sObjectType" value="#[attributes.uriParams.sObjectType]" />
+
+        <validation:is-not-blank-string
+            value="#[payload.masterId default '']"
+            message="masterId is required for merge operation" />
+
+        <salesforce:merge config-ref="salesforce-config"
+                          type="#[vars.sObjectType]"
+                          masterId="#[payload.masterId]">
+            <salesforce:ids>
+                <salesforce:id value="#[payload.victimIds]" />
+            </salesforce:ids>
+        </salesforce:merge>
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("merge", vars.sObjectType, {
+    masterId: payload,
+    merged: true
+}, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'merge', vars.sObjectType, 1, vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         Sub-flow: Bulk Create (auto-routed when array exceeds threshold)
+         ════════════════════════════════════════════════════════════════ -->
+    <sub-flow name="sf-bulk-create-subflow">
+        <salesforce:create-job-bulk-v2 config-ref="salesforce-config"
+                                       operation="insert"
+                                       sObjectType="#[vars.sObjectType]"
+                                       lineEnding="LF"
+                                       columnDelimiter="COMMA" />
+
+        <set-variable variableName="bulkJobId" value="#[payload.id]" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapBulkResponse("create", vars.sObjectType, vars.bulkJobId,
+    "UploadComplete", null, null,
+    correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </sub-flow>
+
+</mule>

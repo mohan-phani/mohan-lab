@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <munit:config name="sf-query-operations-test-suite" />
+
+    <http:request-config name="test-http-request"
+                         basePath="/api/v1">
+        <http:request-connection host="localhost" port="8081" />
+    </http:request-config>
+
+    <!-- ═══ QUERY ENDPOINT TESTS ═══ -->
+
+    <munit:test name="query-valid-soql-returns-200"
+                description="POST /query with valid SOQL returns 200 with response envelope">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:query">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- [{'Id': '001xx0001', 'Name': 'Acme Corp'}]]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="test-http-request"
+                          method="POST" path="/query">
+                <http:body><![CDATA[#[output application/json --- { "soql": "SELECT Id, Name FROM Account LIMIT 10" }]]]></http:body>
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[attributes.statusCode]" is="#[MunitTools::equalTo(200)]" />
+            <munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" />
+            <munit-tools:assert-that expression="#[payload.metadata.operation]" is="#[MunitTools::equalTo('query')]" />
+            <munit-tools:assert-that expression="#[sizeOf(payload.data.records)]" is="#[MunitTools::greaterThanOrEqualTo(1)]" />
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="query-empty-soql-returns-400"
+                description="POST /query with empty SOQL returns 400 validation error"
+                expectedErrorType="APIKIT:BAD_REQUEST">
+        <munit:behavior>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="test-http-request"
+                          method="POST" path="/query">
+                <http:body><![CDATA[#[output application/json --- { "soql": "" }]]]></http:body>
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+    </munit:test>
+
+    <munit:test name="query-injection-blocked-returns-400"
+                description="POST /query with DML injection attempt returns 400"
+                expectedErrorType="SALESFORCE:INVALID_INPUT">
+        <munit:behavior>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <flow-ref name="post:\query:application\json:sf-sapi-config" />
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(false)]" />
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="query-select-star-blocked"
+                description="POST /query with SELECT * returns 400">
+        <munit:behavior>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <set-payload value='#[output application/json --- { "soql": "SELECT * FROM Account" }]' />
+        </munit:behavior>
+        <munit:execution>
+            <flow-ref name="post:\query:application\json:sf-sapi-config" />
+        </munit:execution>
+    </munit:test>
+
+    <munit:test name="query-circuit-breaker-tripped"
+                description="POST /query returns 503 when circuit breaker is open"
+                expectedErrorType="HTTP:SERVICE_UNAVAILABLE">
+        <munit:behavior>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 6]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="test-http-request"
+                          method="POST" path="/query">
+                <http:body><![CDATA[#[output application/json --- { "soql": "SELECT Id FROM Account LIMIT 1" }]]]></http:body>
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+    </munit:test>
+
+    <!-- ═══ SEARCH ENDPOINT TESTS ═══ -->
+
+    <munit:test name="search-valid-sosl-returns-200"
+                description="POST /search with valid SOSL returns 200">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:search">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- [{'Id': '001xx0001', 'Name': 'Acme Corp'}]]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="test-http-request"
+                          method="POST" path="/search">
+                <http:body><![CDATA[#[output application/json --- { "sosl": "FIND {Acme} IN ALL FIELDS RETURNING Account(Id, Name)" }]]]></http:body>
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[attributes.statusCode]" is="#[MunitTools::equalTo(200)]" />
+            <munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" />
+            <munit-tools:assert-that expression="#[payload.metadata.operation]" is="#[MunitTools::equalTo('search')]" />
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="search-empty-sosl-returns-400"
+                description="POST /search with empty SOSL returns validation error"
+                expectedErrorType="VALIDATION:BLANK_STRING">
+        <munit:behavior>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <set-payload value='#[output application/json --- { "sosl": "" }]' />
+        </munit:behavior>
+        <munit:execution>
+            <flow-ref name="post:\search:application\json:sf-sapi-config" />
+        </munit:execution>
+    </munit:test>
+
+</mule>

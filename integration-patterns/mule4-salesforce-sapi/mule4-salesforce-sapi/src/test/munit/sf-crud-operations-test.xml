@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <munit:config name="sf-crud-operations-test-suite" />
+
+    <http:request-config name="crud-test-http-request"
+                         basePath="/api/v1">
+        <http:request-connection host="localhost" port="8081" />
+    </http:request-config>
+
+    <!-- ═══ CREATE TESTS ═══ -->
+
+    <munit:test name="create-single-record-returns-201"
+                description="POST /records/Account with single record returns 201">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:create">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- [{ id: '001xx0001', success: true }]]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="crud-test-http-request"
+                          method="POST" path="/records/Account">
+                <http:body><![CDATA[#[output application/json --- { "Name": "Test Corp", "Industry": "Technology" }]]]></http:body>
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[attributes.statusCode]" is="#[MunitTools::equalTo(201)]" />
+            <munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" />
+            <munit-tools:assert-that expression="#[payload.metadata.operation]" is="#[MunitTools::equalTo('create')]" />
+            <munit-tools:assert-that expression="#[payload.metadata.sObject]" is="#[MunitTools::equalTo('Account')]" />
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="create-multi-record-returns-201"
+                description="POST /records/Contact with array auto-detects multi-record create">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:create">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- [{ id: '003xx0001', success: true }, { id: '003xx0002', success: true }]]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="crud-test-http-request"
+                          method="POST" path="/records/Contact">
+                <http:body><![CDATA[#[output application/json --- [{ "LastName": "Smith" }, { "LastName": "Jones" }]]]]></http:body>
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[attributes.statusCode]" is="#[MunitTools::equalTo(201)]" />
+            <munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" />
+        </munit:validation>
+    </munit:test>
+
+    <!-- ═══ RETRIEVE TESTS ═══ -->
+
+    <munit:test name="retrieve-existing-record-returns-200"
+                description="GET /records/Account/001xx returns 200 with record">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:query">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- [{ Id: '001xx0001', Name: 'Test Corp', attributes: { type: 'Account' } }]]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="crud-test-http-request"
+                          method="GET" path="/records/Account/001xx0001">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[attributes.statusCode]" is="#[MunitTools::equalTo(200)]" />
+            <munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" />
+            <munit-tools:assert-that expression="#[payload.data.Id]" is="#[MunitTools::equalTo('001xx0001')]" />
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="retrieve-nonexistent-record-returns-404"
+                description="GET /records/Account/invalid returns 404"
+                expectedErrorType="SALESFORCE:NOT_FOUND">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:query">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- []]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <set-variable variableName="requestStartTime" value="#[now()]" />
+            <ee:transform>
+                <ee:set-variable variableName="httpStatus"><![CDATA[200]]></ee:set-variable>
+            </ee:transform>
+            <flow-ref name="get:\records\(sObjectType)\(recordId):sf-sapi-config" />
+        </munit:execution>
+    </munit:test>
+
+    <!-- ═══ UPDATE TESTS ═══ -->
+
+    <munit:test name="update-record-returns-200"
+                description="PATCH /records/Account/001xx updates and returns 200">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:update">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- [{ id: '001xx0001', success: true }]]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="crud-test-http-request"
+                          method="PATCH" path="/records/Account/001xx0001">
+                <http:body><![CDATA[#[output application/json --- { "Industry": "Finance" }]]]></http:body>
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[attributes.statusCode]" is="#[MunitTools::equalTo(200)]" />
+            <munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" />
+            <munit-tools:assert-that expression="#[payload.metadata.operation]" is="#[MunitTools::equalTo('update')]" />
+        </munit:validation>
+    </munit:test>
+
+    <!-- ═══ DELETE TESTS ═══ -->
+
+    <munit:test name="delete-record-returns-200"
+                description="DELETE /records/Account/001xx returns 200 with deleted flag">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:delete">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- [{ id: '001xx0001', success: true }]]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="crud-test-http-request"
+                          method="DELETE" path="/records/Account/001xx0001">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[attributes.statusCode]" is="#[MunitTools::equalTo(200)]" />
+            <munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" />
+            <munit-tools:assert-that expression="#[payload.data.deleted]" is="#[MunitTools::equalTo(true)]" />
+        </munit:validation>
+    </munit:test>
+
+    <!-- ═══ UPSERT TESTS ═══ -->
+
+    <munit:test name="upsert-record-returns-200"
+                description="PUT /records/Account/upsert with external ID returns 200">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:upsert">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- [{ id: '001xx0001', success: true, created: true }]]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="os:retrieve">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- 0]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="crud-test-http-request"
+                          method="PUT" path="/records/Account/upsert">
+                <http:body><![CDATA[#[output application/json --- { "externalIdField": "External_Id__c", "records": [{ "Name": "Acme", "External_Id__c": "EXT-001" }] }]]]></http:body>
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[attributes.statusCode]" is="#[MunitTools::equalTo(200)]" />
+            <munit-tools:assert-that expression="#[payload.success]" is="#[MunitTools::equalTo(true)]" />
+            <munit-tools:assert-that expression="#[payload.metadata.operation]" is="#[MunitTools::equalTo('upsert')]" />
+        </munit:validation>
+    </munit:test>
+
+    <!-- ═══ HEALTH CHECK TEST ═══ -->
+
+    <munit:test name="health-check-returns-200"
+                description="GET /health returns 200 with UP status when SF is reachable">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:query">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[output application/java --- [{ Id: '00Dxx0001' }]]" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="crud-test-http-request"
+                          method="GET" path="/health">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[attributes.statusCode]" is="#[MunitTools::equalTo(200)]" />
+            <munit-tools:assert-that expression="#[payload.status]" is="#[MunitTools::equalTo('UP')]" />
+            <munit-tools:assert-that expression="#[payload.salesforceConnectivity]" is="#[MunitTools::equalTo('OK')]" />
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="health-check-sf-down-returns-503"
+                description="GET /health returns 503 when SF is unreachable">
+        <munit:behavior>
+            <munit-tools:mock-when processor="salesforce:query">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="SALESFORCE:CONNECTIVITY" />
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <http:request config-ref="crud-test-http-request"
+                          method="GET" path="/health">
+                <http:headers><![CDATA[#[output application/java --- { "Content-Type": "application/json" }]]]></http:headers>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[attributes.statusCode]" is="#[MunitTools::equalTo(503)]" />
+            <munit-tools:assert-that expression="#[payload.status]" is="#[MunitTools::equalTo('DEGRADED')]" />
+        </munit:validation>
+    </munit:test>
+
+</mule>

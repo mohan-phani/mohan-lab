@@ -1,0 +1,389 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+      xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+        http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd">
+
+    <description>
+        Metadata and Describe Operations — sObject describe, global describe,
+        get-updated, get-deleted, convert-lead, and Apex invocations.
+    </description>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /describe/{sObjectType} — Describe sObject
+         Returns field definitions, picklist values, record types, etc.
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\describe\(sObjectType):sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <set-variable variableName="sObjectType" value="#[attributes.uriParams.sObjectType]" />
+
+        <validation:is-not-blank-string
+            value="#[vars.sObjectType default '']"
+            message="sObjectType path parameter is required" />
+
+        <salesforce:describe-sobject config-ref="salesforce-config"
+                                     type="#[vars.sObjectType]" />
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapDescribeResponse(vars.sObjectType, payload, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'describe', vars.sObjectType, 1, vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /describe — Describe Global (all sObjects)
+         Returns list of all accessible sObjects in the org
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\describe:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <salesforce:describe-global config-ref="salesforce-config" />
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    success: true,
+    data: {
+        sObjects: payload map ((obj) -> {
+            name: obj.name,
+            label: obj.label,
+            keyPrefix: obj.keyPrefix,
+            queryable: obj.queryable,
+            createable: obj.createable,
+            updateable: obj.updateable,
+            deletable: obj.deletable,
+            custom: obj.custom
+        })
+    },
+    metadata: {
+        operation: "describe-global",
+        recordCount: sizeOf(payload default []),
+        timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSXXX"},
+        correlationId: correlationId,
+        apiVersion: p('sfdc.api.version')
+    }
+}]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'describe-global', 'ALL', sizeOf(payload.data.sObjects default []), vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /records/{sObjectType}/updated — Get Updated Records
+         Query params: ?startDate=2024-01-01T00:00:00Z&endDate=2024-01-02T00:00:00Z
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\records\(sObjectType)\updated:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <set-variable variableName="sObjectType" value="#[attributes.uriParams.sObjectType]" />
+
+        <salesforce:get-updated-objects config-ref="salesforce-config"
+                                        type="#[vars.sObjectType]">
+            <salesforce:initial-time-window>#[attributes.queryParams.startDate]</salesforce:initial-time-window>
+            <salesforce:end-time-window>#[attributes.queryParams.endDate]</salesforce:end-time-window>
+        </salesforce:get-updated-objects>
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("get-updated", vars.sObjectType, payload, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'get-updated', vars.sObjectType, 0, vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /records/{sObjectType}/deleted — Get Deleted Records
+         Query params: ?startDate=2024-01-01T00:00:00Z&endDate=2024-01-02T00:00:00Z
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\records\(sObjectType)\deleted:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <set-variable variableName="sObjectType" value="#[attributes.uriParams.sObjectType]" />
+
+        <salesforce:get-deleted-objects config-ref="salesforce-config"
+                                        type="#[vars.sObjectType]">
+            <salesforce:initial-time-window>#[attributes.queryParams.startDate]</salesforce:initial-time-window>
+            <salesforce:end-time-window>#[attributes.queryParams.endDate]</salesforce:end-time-window>
+        </salesforce:get-deleted-objects>
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("get-deleted", vars.sObjectType, payload, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'get-deleted', vars.sObjectType, 0, vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         POST /leads/convert — Convert Lead to Account/Contact/Opportunity
+         Body: { "leadId": "00Qxx...", "convertedStatus": "Qualified",
+                 "accountId": "001xx..." (optional), ... }
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="post:\leads\convert:application\json:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <validation:is-not-blank-string
+            value="#[payload.leadId default '']"
+            message="leadId is required for lead conversion" />
+
+        <salesforce:convert-lead config-ref="salesforce-config"
+                                 leadId="#[payload.leadId]"
+                                 contactId="#[payload.contactId default '']"
+                                 accountId="#[payload.accountId default '']"
+                                 convertedStatus="#[payload.convertedStatus default 'Qualified']"
+                                 overWriteLeadSource="#[payload.overwriteLeadSource default false]"
+                                 doNotCreateOpportunity="#[payload.doNotCreateOpportunity default false]" />
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("convert-lead", "Lead", payload, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'convert-lead', 'Lead', 1, vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         POST /apex/rest — Invoke Apex REST
+         Body: { "path": "/MyService/v1/process", "method": "POST",
+                 "body": { ... }, "queryParams": { ... } }
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="post:\apex\rest:application\json:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <validation:is-not-blank-string
+            value="#[payload.path default '']"
+            message="Apex REST path is required (e.g., /MyService/v1/process)" />
+
+        <salesforce:invoke-apex-rest-method config-ref="salesforce-config"
+                                            path="#[payload.path]"
+                                            method="#[upper(payload.method default 'GET')]">
+            <salesforce:body>#[payload.body default {}]</salesforce:body>
+            <salesforce:query-params>#[payload.queryParams default {}]</salesforce:query-params>
+        </salesforce:invoke-apex-rest-method>
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("apex-rest", payload.path default "apex",
+    payload, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'apex-rest', 'Apex', 1, vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         POST /apex/soap — Invoke Apex SOAP
+         Body: { "className": "MyWebService", "methodName": "processRecords",
+                 "arguments": [...] }
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="post:\apex\soap:application\json:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <validation:is-not-blank-string
+            value="#[payload.className default '']"
+            message="className is required for Apex SOAP invocation" />
+        <validation:is-not-blank-string
+            value="#[payload.methodName default '']"
+            message="methodName is required for Apex SOAP invocation" />
+
+        <salesforce:invoke-apex-soap-method config-ref="salesforce-config"
+                                            soapMethodName="#[payload.methodName]"
+                                            apexClass="#[payload.className]">
+            <salesforce:arguments>#[payload.arguments default []]</salesforce:arguments>
+        </salesforce:invoke-apex-soap-method>
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapCrudResponse("apex-soap", payload.className default "Apex",
+    payload, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'apex-soap', 'Apex', 1, vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /health — Health Check with Salesforce connectivity test
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\health:sf-sapi-config">
+        <try>
+            <!-- Quick SF connectivity check via limits call -->
+            <salesforce:query config-ref="salesforce-config">
+                <salesforce:salesforce-query>SELECT Id FROM Organization LIMIT 1</salesforce:salesforce-query>
+            </salesforce:query>
+
+            <ee:transform>
+                <ee:message>
+                    <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    status: "UP",
+    service: "salesforce-sapi",
+    salesforceConnectivity: "OK",
+    apiVersion: p('sfdc.api.version'),
+    environment: p('mule.env') default "local",
+    timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSXXX"}
+}]]></ee:set-payload>
+                </ee:message>
+            </ee:transform>
+
+            <error-handler>
+                <on-error-continue>
+                    <ee:transform>
+                        <ee:message>
+                            <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    status: "DEGRADED",
+    service: "salesforce-sapi",
+    salesforceConnectivity: "FAILED",
+    apiVersion: p('sfdc.api.version'),
+    environment: p('mule.env') default "local",
+    timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSXXX"},
+    error: error.description default "Unable to reach Salesforce"
+}]]></ee:set-payload>
+                        </ee:message>
+                        <ee:variables>
+                            <ee:set-variable variableName="httpStatus"><![CDATA[503]]></ee:set-variable>
+                        </ee:variables>
+                    </ee:transform>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </flow>
+
+</mule>

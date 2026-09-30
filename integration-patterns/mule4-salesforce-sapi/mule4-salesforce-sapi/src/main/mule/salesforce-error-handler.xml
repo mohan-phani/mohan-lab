@@ -1,0 +1,323 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <description>
+        Comprehensive Salesforce Error Handler — covers every SALESFORCE: error type
+        from connector 12.0, plus APIkit errors, HTTP errors, and Mule runtime errors.
+        Each error is mapped to a consumer-friendly HTTP status with structured JSON.
+    </description>
+
+    <error-handler name="sf-global-error-handler">
+
+        <!-- ══════════════════════════════════════════════════════════
+             SALESFORCE-SPECIFIC ERRORS
+             ══════════════════════════════════════════════════════════ -->
+
+        <!-- INVALID_INPUT — Bad SOQL, wrong field names, malformed requests -->
+        <on-error-propagate type="SALESFORCE:INVALID_INPUT"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="400" />
+            <set-variable variableName="errorCategory" value="SALESFORCE_INVALID_INPUT" />
+            <set-variable variableName="errorTitle" value="Invalid Salesforce Input" />
+            <set-variable variableName="errorDetail" value="#[error.description]" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- NOT_FOUND — sObject, record, or resource does not exist -->
+        <on-error-propagate type="SALESFORCE:NOT_FOUND"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="404" />
+            <set-variable variableName="errorCategory" value="SALESFORCE_NOT_FOUND" />
+            <set-variable variableName="errorTitle" value="Salesforce Resource Not Found" />
+            <set-variable variableName="errorDetail" value="#[error.description]" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- CONNECTIVITY — Cannot reach Salesforce (network, DNS, firewall) -->
+        <on-error-propagate type="SALESFORCE:CONNECTIVITY"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="503" />
+            <set-variable variableName="errorCategory" value="SALESFORCE_CONNECTIVITY" />
+            <set-variable variableName="errorTitle" value="Salesforce Connection Failed" />
+            <set-variable variableName="errorDetail"
+                          value="Unable to establish connection to Salesforce. Check network, credentials, and IP whitelist." />
+            <flow-ref name="sf-circuit-breaker-record-failure" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- TIMEOUT — Salesforce did not respond in time -->
+        <on-error-propagate type="SALESFORCE:TIMEOUT"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="504" />
+            <set-variable variableName="errorCategory" value="SALESFORCE_TIMEOUT" />
+            <set-variable variableName="errorTitle" value="Salesforce Timeout" />
+            <set-variable variableName="errorDetail"
+                          value="Salesforce did not respond within the configured timeout. Consider simplifying the query or increasing timeout." />
+            <flow-ref name="sf-circuit-breaker-record-failure" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- RETRY_EXHAUSTED — All reconnection attempts failed -->
+        <on-error-propagate type="SALESFORCE:RETRY_EXHAUSTED"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="503" />
+            <set-variable variableName="errorCategory" value="SALESFORCE_RETRY_EXHAUSTED" />
+            <set-variable variableName="errorTitle" value="Salesforce Retry Exhausted" />
+            <set-variable variableName="errorDetail"
+                          value="All reconnection attempts to Salesforce have been exhausted. Service may be temporarily unavailable." />
+            <flow-ref name="sf-circuit-breaker-record-failure" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- INVALID_RESPONSE — Salesforce returned unparseable data -->
+        <on-error-propagate type="SALESFORCE:INVALID_RESPONSE"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="502" />
+            <set-variable variableName="errorCategory" value="SALESFORCE_INVALID_RESPONSE" />
+            <set-variable variableName="errorTitle" value="Invalid Salesforce Response" />
+            <set-variable variableName="errorDetail"
+                          value="Salesforce returned a response that could not be parsed. This may indicate an API version mismatch or Salesforce service issue." />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- MUTUAL_AUTHENTICATION_FAILED — Auth/permission issue -->
+        <on-error-propagate type="SALESFORCE:MUTUAL_AUTHENTICATION_FAILED"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="401" />
+            <set-variable variableName="errorCategory" value="SALESFORCE_AUTH_FAILED" />
+            <set-variable variableName="errorTitle" value="Salesforce Authentication Failed" />
+            <set-variable variableName="errorDetail"
+                          value="Mutual authentication with Salesforce failed. Verify certificates, credentials, and connected app permissions." />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- LIMIT_EXCEEDED — API limits hit (Bulk API v2) -->
+        <on-error-propagate type="SALESFORCE:LIMIT_EXCEEDED"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="429" />
+            <set-variable variableName="errorCategory" value="SALESFORCE_LIMIT_EXCEEDED" />
+            <set-variable variableName="errorTitle" value="Salesforce API Limit Exceeded" />
+            <set-variable variableName="errorDetail"
+                          value="#['Salesforce API limit exceeded. ' ++ (error.description default 'Review your org API usage and governor limits.')]" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- ══════════════════════════════════════════════════════════
+             APIKIT ERRORS
+             ══════════════════════════════════════════════════════════ -->
+
+        <on-error-propagate type="APIKIT:BAD_REQUEST"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="400" />
+            <set-variable variableName="errorCategory" value="BAD_REQUEST" />
+            <set-variable variableName="errorTitle" value="Bad Request" />
+            <set-variable variableName="errorDetail" value="#[error.description]" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <on-error-propagate type="APIKIT:NOT_FOUND"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="404" />
+            <set-variable variableName="errorCategory" value="NOT_FOUND" />
+            <set-variable variableName="errorTitle" value="Endpoint Not Found" />
+            <set-variable variableName="errorDetail" value="#[error.description]" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="405" />
+            <set-variable variableName="errorCategory" value="METHOD_NOT_ALLOWED" />
+            <set-variable variableName="errorTitle" value="Method Not Allowed" />
+            <set-variable variableName="errorDetail" value="#[error.description]" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <on-error-propagate type="APIKIT:UNSUPPORTED_MEDIA_TYPE"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="415" />
+            <set-variable variableName="errorCategory" value="UNSUPPORTED_MEDIA_TYPE" />
+            <set-variable variableName="errorTitle" value="Unsupported Media Type" />
+            <set-variable variableName="errorDetail" value="#[error.description]" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- ══════════════════════════════════════════════════════════
+             VALIDATION / EXPRESSION ERRORS
+             ══════════════════════════════════════════════════════════ -->
+
+        <on-error-propagate
+            type="VALIDATION:INVALID_BOOLEAN, VALIDATION:INVALID_NUMBER, VALIDATION:INVALID_VALUE, VALIDATION:MISMATCH, VALIDATION:NULL, VALIDATION:NOT_NULL, EXPRESSION"
+            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="400" />
+            <set-variable variableName="errorCategory" value="VALIDATION_ERROR" />
+            <set-variable variableName="errorTitle" value="Validation Failed" />
+            <set-variable variableName="errorDetail" value="#[error.description]" />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- ══════════════════════════════════════════════════════════
+             HTTP LAYER ERRORS (downstream calls if any)
+             ══════════════════════════════════════════════════════════ -->
+
+        <on-error-propagate type="HTTP:UNAUTHORIZED, CLIENT-SECURITY"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="401" />
+            <set-variable variableName="errorCategory" value="UNAUTHORIZED" />
+            <set-variable variableName="errorTitle" value="Unauthorized" />
+            <set-variable variableName="errorDetail" value="Authentication required. Provide valid credentials." />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <on-error-propagate type="HTTP:FORBIDDEN, SERVER-SECURITY"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="403" />
+            <set-variable variableName="errorCategory" value="FORBIDDEN" />
+            <set-variable variableName="errorTitle" value="Forbidden" />
+            <set-variable variableName="errorDetail" value="You do not have permission to perform this operation." />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <on-error-propagate type="HTTP:TIMEOUT, SOCKET:CONNECTIVITY"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="504" />
+            <set-variable variableName="errorCategory" value="GATEWAY_TIMEOUT" />
+            <set-variable variableName="errorTitle" value="Gateway Timeout" />
+            <set-variable variableName="errorDetail" value="Downstream service timed out." />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+        <!-- ══════════════════════════════════════════════════════════
+             CATCH-ALL — 500 Internal Server Error
+             ══════════════════════════════════════════════════════════ -->
+
+        <on-error-propagate type="ANY"
+                            enableNotifications="true" logException="true">
+            <set-variable variableName="httpStatus" value="500" />
+            <set-variable variableName="errorCategory" value="INTERNAL_SERVER_ERROR" />
+            <set-variable variableName="errorTitle" value="Internal Server Error" />
+            <set-variable variableName="errorDetail"
+                          value="An unexpected error occurred. Please contact support with the correlationId." />
+            <flow-ref name="sf-build-error-response" />
+        </on-error-propagate>
+
+    </error-handler>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         BUILD ERROR RESPONSE — shared sub-flow
+         ════════════════════════════════════════════════════════════════ -->
+    <sub-flow name="sf-build-error-response">
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcErrorHandler
+---
+buildSfdcErrorResponse(
+    vars.httpStatus as Number,
+    vars.errorCategory,
+    vars.errorTitle,
+    vars.errorDetail default error.description default "Unknown error",
+    error,
+    correlationId
+)]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    "Content-Type": "application/json",
+    "X-Correlation-Id": correlationId
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="ERROR"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('ERROR', vars.errorCategory, error, correlationId, attributes)]" />
+    </sub-flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         CIRCUIT BREAKER — Records failures and trips when threshold hit
+         ════════════════════════════════════════════════════════════════ -->
+    <sub-flow name="sf-circuit-breaker-record-failure">
+        <try>
+            <os:retrieve key="sf-failure-count"
+                         objectStore="circuit-breaker-store"
+                         target="failureCount" />
+            <set-variable variableName="failureCount"
+                          value="#[(vars.failureCount as Number default 0) + 1]" />
+            <os:store key="sf-failure-count"
+                      objectStore="circuit-breaker-store">
+                <os:value>#[vars.failureCount]</os:value>
+            </os:store>
+            <choice>
+                <when expression="#[vars.failureCount >= p('circuit-breaker.failure-threshold') as Number]">
+                    <os:store key="sf-circuit-open"
+                              objectStore="circuit-breaker-store">
+                        <os:value>#[true]</os:value>
+                    </os:store>
+                    <logger level="WARN"
+                            message="CIRCUIT BREAKER TRIPPED — Salesforce failures reached threshold. Circuit is OPEN." />
+                </when>
+            </choice>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <!-- First failure — initialize counter -->
+                    <os:store key="sf-failure-count"
+                              objectStore="circuit-breaker-store">
+                        <os:value>#[1]</os:value>
+                    </os:store>
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         CIRCUIT BREAKER CHECK — Call before every SF operation
+         ════════════════════════════════════════════════════════════════ -->
+    <sub-flow name="sf-circuit-breaker-check">
+        <try>
+            <os:retrieve key="sf-circuit-open"
+                         objectStore="circuit-breaker-store"
+                         target="circuitOpen" />
+            <choice>
+                <when expression="#[vars.circuitOpen == true]">
+                    <raise-error type="MULE:CONNECTIVITY"
+                                 description="Circuit breaker is OPEN — Salesforce calls are temporarily blocked due to repeated failures. Will auto-reset." />
+                </when>
+            </choice>
+            <error-handler>
+                <on-error-continue type="OS:KEY_NOT_FOUND">
+                    <!-- Circuit is closed (healthy) — proceed -->
+                    <logger level="DEBUG" message="Circuit breaker: CLOSED (healthy)" />
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         CIRCUIT BREAKER RESET — Call on successful SF operation
+         ════════════════════════════════════════════════════════════════ -->
+    <sub-flow name="sf-circuit-breaker-reset">
+        <try>
+            <os:remove key="sf-failure-count" objectStore="circuit-breaker-store" />
+            <os:remove key="sf-circuit-open" objectStore="circuit-breaker-store" />
+            <error-handler>
+                <on-error-continue type="OS:KEY_NOT_FOUND">
+                    <logger level="DEBUG" message="Circuit breaker: nothing to reset" />
+                </on-error-continue>
+            </error-handler>
+        </try>
+    </sub-flow>
+
+</mule>

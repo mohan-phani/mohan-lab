@@ -1,0 +1,31 @@
+http:
+  listener:
+    host: "0.0.0.0"
+    port: "8081"
+
+mule:
+  env: "test"
+
+sfdc:
+  connection:
+    username: "test@example.com"
+    password: "testPassword"
+    security-token: "testToken"
+    url: "https://test.salesforce.com/services/Soap/u/${sfdc.api.version}"
+
+query:
+  max:
+    soql-length: "20000"
+  default:
+    records-per-page: "200"
+
+bulk:
+  auto-route:
+    threshold: "200"
+
+circuit-breaker:
+  failure-threshold: "5"
+  reset-timeout-seconds: "60"
+
+audit:
+  enabled: "true"

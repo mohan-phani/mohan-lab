@@ -1,0 +1,15 @@
+# ═══════════════════════════════════════════════════════════
+# PROD Environment Configuration
+# ═══════════════════════════════════════════════════════════
+
+env: "prod"
+
+http:
+  host: "0.0.0.0"
+  port: "${http.port}"
+
+sfdc:
+  username: "${sfdc.username}"
+  password: "${sfdc.password}"
+  security-token: "${sfdc.security.token}"
+  url: "https://login.salesforce.com/services/Soap/u/${sfdc.api.version}"

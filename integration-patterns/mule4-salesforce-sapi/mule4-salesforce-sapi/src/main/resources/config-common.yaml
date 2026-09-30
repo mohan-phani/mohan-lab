@@ -1,0 +1,36 @@
+# ═══════════════════════════════════════════════════════════
+# Common Configuration — shared across all environments
+# ═══════════════════════════════════════════════════════════
+
+app:
+  name: "mule4-salesforce-sapi"
+  version: "1.0.0"
+
+# Salesforce API version — single place to upgrade
+sfdc:
+  api:
+    version: "v62.0"
+
+# Query guardrails
+query:
+  max:
+    soql-length: 20000
+    records-per-page: 2000
+  default:
+    records-per-page: 200
+
+# Bulk routing threshold — auto-routes to Bulk API v2 when record count exceeds this
+bulk:
+  auto-route-threshold: 200
+  poll-interval-ms: 5000
+  max-poll-attempts: 120
+
+# Circuit breaker config
+circuit-breaker:
+  failure-threshold: 5
+  reset-timeout-ms: 60000
+  half-open-max-calls: 2
+
+# Audit logging
+audit:
+  enabled: true

@@ -1,0 +1,17 @@
+# ═══════════════════════════════════════════════════════════
+# Local Development Configuration
+# ═══════════════════════════════════════════════════════════
+
+env: "local"
+
+http:
+  host: "0.0.0.0"
+  port: "8081"
+
+# Salesforce connection — use your developer org credentials
+sfdc:
+  username: "${sfdc.username}"
+  password: "${sfdc.password}"
+  security-token: "${sfdc.security.token}"
+  url: "https://login.salesforce.com/services/Soap/u/${sfdc.api.version}"
+  # For sandbox use: https://test.salesforce.com/services/Soap/u/${sfdc.api.version}

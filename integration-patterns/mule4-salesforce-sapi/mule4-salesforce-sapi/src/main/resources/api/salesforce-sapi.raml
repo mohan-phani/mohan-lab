@@ -1,0 +1,446 @@
+#%RAML 1.0
+title: Salesforce Universal System API
+version: v1
+baseUri: http://localhost:8081/api/{version}
+mediaType: application/json
+
+description: |
+  Universal Salesforce SAPI — sObject-agnostic endpoints for every SF Connector 12.0
+  operation. Features: SOQL injection prevention, query complexity scoring,
+  circuit breaker, audit trail, bulk auto-routing, and RFC 7807-inspired errors.
+
+traits:
+  correlated:
+    headers:
+      X-Correlation-Id:
+        type: string
+        required: false
+        description: Correlation ID for distributed tracing. Auto-generated if not supplied.
+      X-Client-Id:
+        type: string
+        required: false
+        description: Client identifier for audit trail.
+    responses:
+      200:
+        headers:
+          X-Correlation-Id:
+            type: string
+
+types:
+  ErrorResponse:
+    type: object
+    properties:
+      success: boolean
+      error:
+        type: object
+        properties:
+          status: integer
+          errorCode: string
+          message: string
+          detail?: string
+          correlationId: string
+          timestamp: string
+          path?: string
+    example:
+      success: false
+      error:
+        status: 400
+        errorCode: "SALESFORCE:INVALID_INPUT"
+        message: "SOQL Validation Failed"
+        detail: "Query must start with SELECT or FIND"
+        correlationId: "abc-123"
+        timestamp: "2024-01-15T10:30:00.000Z"
+        path: "/api/v1/query"
+
+  SuccessEnvelope:
+    type: object
+    properties:
+      success: boolean
+      data: object
+      metadata:
+        type: object
+        properties:
+          operation: string
+          recordCount?: integer
+          timestamp: string
+          correlationId: string
+          apiVersion: string
+
+  QueryRequest:
+    type: object
+    properties:
+      soql:
+        type: string
+        description: SOQL query string. Must start with SELECT or FIND.
+        example: "SELECT Id, Name, Industry FROM Account WHERE Industry != null LIMIT 10"
+    example:
+      soql: "SELECT Id, Name, Industry FROM Account WHERE Industry != null LIMIT 10"
+
+  SearchRequest:
+    type: object
+    properties:
+      sosl:
+        type: string
+        description: SOSL search string.
+        example: "FIND {Acme} IN ALL FIELDS RETURNING Account(Id, Name), Contact(Id, Name)"
+    example:
+      sosl: "FIND {Acme} IN ALL FIELDS RETURNING Account(Id, Name), Contact(Id, Name)"
+
+  UpsertRequest:
+    type: object
+    properties:
+      externalIdField:
+        type: string
+        description: External ID field name for upsert matching.
+        example: "External_Id__c"
+      records:
+        type: array
+        items: object
+        description: One or more records to upsert.
+    example:
+      externalIdField: "External_Id__c"
+      records:
+        - Name: "Acme Corp"
+          External_Id__c: "EXT-001"
+
+  MergeRequest:
+    type: object
+    properties:
+      masterId:
+        type: string
+        description: The surviving record ID.
+      victimIds:
+        type: array
+        items: string
+        description: Record IDs to merge into the master.
+    example:
+      masterId: "001xx000003DGbYAAW"
+      victimIds:
+        - "001xx000003DGbZAAW"
+
+  LeadConvertRequest:
+    type: object
+    properties:
+      leadId:
+        type: string
+        description: Lead record ID to convert.
+      convertedStatus:
+        type: string
+        description: Status to set on converted lead (e.g., "Qualified").
+        default: "Qualified"
+      accountId?:
+        type: string
+        description: Existing Account ID to link to (optional).
+      contactId?:
+        type: string
+        description: Existing Contact ID to link to (optional).
+      doNotCreateOpportunity?:
+        type: boolean
+        default: false
+      overwriteLeadSource?:
+        type: boolean
+        default: false
+    example:
+      leadId: "00Qxx000001234"
+      convertedStatus: "Qualified"
+
+  ApexRestRequest:
+    type: object
+    properties:
+      path:
+        type: string
+        description: Apex REST endpoint path.
+        example: "/MyService/v1/process"
+      method?:
+        type: string
+        enum: [GET, POST, PUT, PATCH, DELETE]
+        default: GET
+      body?: object
+      queryParams?: object
+    example:
+      path: "/MyService/v1/process"
+      method: "POST"
+      body:
+        action: "processRecords"
+
+  ApexSoapRequest:
+    type: object
+    properties:
+      className:
+        type: string
+        description: Apex SOAP web service class name.
+      methodName:
+        type: string
+        description: Method to invoke on the class.
+      arguments?:
+        type: array
+        items: object
+    example:
+      className: "MyWebService"
+      methodName: "processRecords"
+      arguments: []
+
+/query:
+  is: [correlated]
+  post:
+    description: |
+      Universal SOQL Query Engine. Accepts any SOQL query, validates it against
+      injection and complexity guardrails, executes against Salesforce, and returns
+      normalized JSON. Query complexity score is returned in X-Query-Complexity header.
+    body:
+      application/json:
+        type: QueryRequest
+    responses:
+      200:
+        body:
+          application/json:
+            type: SuccessEnvelope
+            example:
+              success: true
+              data:
+                records:
+                  - Id: "001xx000003DGbYAAW"
+                    Name: "Acme Corp"
+                    Industry: "Technology"
+                totalSize: 1
+              metadata:
+                operation: "query"
+                recordCount: 1
+                timestamp: "2024-01-15T10:30:00.000Z"
+                correlationId: "abc-123"
+                apiVersion: "v62.0"
+                queryComplexity:
+                  score: 2
+                  warnings: []
+      400:
+        body:
+          application/json:
+            type: ErrorResponse
+
+/search:
+  is: [correlated]
+  post:
+    description: Universal SOSL Search. Accepts a SOSL search string and returns matching records.
+    body:
+      application/json:
+        type: SearchRequest
+    responses:
+      200:
+        body:
+          application/json:
+            type: SuccessEnvelope
+
+/records/{sObjectType}:
+  is: [correlated]
+  uriParameters:
+    sObjectType:
+      type: string
+      description: Salesforce sObject API name (e.g., Account, Contact, Custom__c).
+      example: Account
+  post:
+    description: |
+      Create record(s). Accepts a single object or an array.
+      Arrays exceeding the bulk threshold auto-route to Bulk API v2.
+    body:
+      application/json:
+        example:
+          Name: "Acme Corp"
+          Industry: "Technology"
+    responses:
+      201:
+        body:
+          application/json:
+            type: SuccessEnvelope
+
+  /{recordId}:
+    uriParameters:
+      recordId:
+        type: string
+        description: Salesforce 15 or 18-character record ID.
+        example: "001xx000003DGbYAAW"
+    get:
+      description: Retrieve a single record by ID. Use ?fields=Id,Name to select specific fields.
+      queryParameters:
+        fields?:
+          type: string
+          description: Comma-separated field API names. Defaults to FIELDS(ALL).
+          example: "Id,Name,Industry"
+      responses:
+        200:
+          body:
+            application/json:
+              type: SuccessEnvelope
+        404:
+          body:
+            application/json:
+              type: ErrorResponse
+
+    patch:
+      description: Update a record by ID. Send only the fields to change.
+      body:
+        application/json:
+          example:
+            Industry: "Finance"
+      responses:
+        200:
+          body:
+            application/json:
+              type: SuccessEnvelope
+
+    delete:
+      description: Delete a record by ID.
+      responses:
+        200:
+          body:
+            application/json:
+              type: SuccessEnvelope
+
+  /upsert:
+    put:
+      description: Upsert record(s) using an external ID field.
+      body:
+        application/json:
+          type: UpsertRequest
+      responses:
+        200:
+          body:
+            application/json:
+              type: SuccessEnvelope
+
+  /merge:
+    post:
+      description: Merge records (e.g., duplicate Accounts/Contacts/Leads).
+      body:
+        application/json:
+          type: MergeRequest
+      responses:
+        200:
+          body:
+            application/json:
+              type: SuccessEnvelope
+
+  /updated:
+    get:
+      description: Get IDs of records updated within a date range.
+      queryParameters:
+        startDate:
+          type: string
+          description: ISO 8601 start date.
+          example: "2024-01-01T00:00:00Z"
+        endDate:
+          type: string
+          description: ISO 8601 end date.
+          example: "2024-01-02T00:00:00Z"
+      responses:
+        200:
+          body:
+            application/json:
+              type: SuccessEnvelope
+
+  /deleted:
+    get:
+      description: Get IDs of records deleted within a date range.
+      queryParameters:
+        startDate:
+          type: string
+          description: ISO 8601 start date.
+          example: "2024-01-01T00:00:00Z"
+        endDate:
+          type: string
+          description: ISO 8601 end date.
+          example: "2024-01-02T00:00:00Z"
+      responses:
+        200:
+          body:
+            application/json:
+              type: SuccessEnvelope
+
+/describe:
+  is: [correlated]
+  get:
+    description: Describe Global — returns metadata for all accessible sObjects in the org.
+    responses:
+      200:
+        body:
+          application/json:
+            type: SuccessEnvelope
+
+  /{sObjectType}:
+    uriParameters:
+      sObjectType:
+        type: string
+        example: Account
+    get:
+      description: |
+        Describe sObject — returns field definitions, picklist values, record types,
+        and all metadata for a specific sObject.
+      responses:
+        200:
+          body:
+            application/json:
+              type: SuccessEnvelope
+
+/leads/convert:
+  is: [correlated]
+  post:
+    description: Convert a Lead to Account/Contact/Opportunity.
+    body:
+      application/json:
+        type: LeadConvertRequest
+    responses:
+      200:
+        body:
+          application/json:
+            type: SuccessEnvelope
+
+/apex/rest:
+  is: [correlated]
+  post:
+    description: Invoke a custom Apex REST endpoint.
+    body:
+      application/json:
+        type: ApexRestRequest
+    responses:
+      200:
+        body:
+          application/json:
+            type: SuccessEnvelope
+
+/apex/soap:
+  is: [correlated]
+  post:
+    description: Invoke a custom Apex SOAP web service method.
+    body:
+      application/json:
+        type: ApexSoapRequest
+    responses:
+      200:
+        body:
+          application/json:
+            type: SuccessEnvelope
+
+/health:
+  get:
+    description: Health check with Salesforce connectivity test.
+    responses:
+      200:
+        body:
+          application/json:
+            example:
+              status: "UP"
+              service: "salesforce-sapi"
+              salesforceConnectivity: "OK"
+              apiVersion: "v62.0"
+              environment: "local"
+              timestamp: "2024-01-15T10:30:00.000Z"
+      503:
+        body:
+          application/json:
+            example:
+              status: "DEGRADED"
+              service: "salesforce-sapi"
+              salesforceConnectivity: "FAILED"
+              apiVersion: "v62.0"
+              environment: "local"
+              timestamp: "2024-01-15T10:30:00.000Z"
+              error: "Unable to reach Salesforce"

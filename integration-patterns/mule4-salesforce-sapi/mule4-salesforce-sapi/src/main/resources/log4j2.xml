@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%-5p %d [%t] [processor: %X{processorPath}] %c: %m%n" />
+        </Console>
+        <RollingFile name="RollingFile"
+                     fileName="${sys:mule.home}/logs/salesforce-sapi.log"
+                     filePattern="${sys:mule.home}/logs/salesforce-sapi-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="%-5p %d [%t] [processor: %X{processorPath}] %c: %m%n" />
+            <Policies>
+                <SizeBasedTriggeringPolicy size="10 MB" />
+                <TimeBasedTriggeringPolicy />
+            </Policies>
+            <DefaultRolloverStrategy max="10" />
+        </RollingFile>
+    </Appenders>
+    <Loggers>
+        <AsyncLogger name="org.mule.runtime.core" level="WARN" />
+        <AsyncLogger name="org.mule.extension.salesforce" level="INFO" />
+        <AsyncLogger name="com.mulesoft.connectors" level="INFO" />
+        <AsyncLogger name="org.mule.service.http" level="WARN" />
+        <Root level="INFO">
+            <AppenderRef ref="Console" />
+            <AppenderRef ref="RollingFile" />
+        </Root>
+    </Loggers>
+</Configuration>

@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+      xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+        http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd">
+
+    <description>
+        Universal SOQL Query Engine — accepts any SOQL query from any layer,
+        validates it, checks circuit breaker, executes against Salesforce,
+        and returns normalized JSON with pagination metadata.
+
+        Features:
+        - SOQL injection prevention (blocks DML, comments, multi-statement)
+        - Query complexity scoring with warnings
+        - Auto-pagination for large result sets
+        - Consistent response envelope
+        - Full audit trail
+    </description>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         POST /query — Universal SOQL Query Engine
+         Body: { "soql": "SELECT Id, Name FROM Account WHERE ..." }
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="post:\query:application\json:sf-sapi-config">
+        <!-- Circuit breaker check -->
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <!-- Validate SOQL using guardrails -->
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="queryValidation"><![CDATA[%dw 2.0
+output application/java
+import * from dwl::QueryGuardrails
+---
+validateSoql(payload.soql, p('query.max.soql-length') as Number)]]></ee:set-variable>
+                <ee:set-variable variableName="queryComplexity"><![CDATA[%dw 2.0
+output application/java
+import * from dwl::QueryGuardrails
+---
+if (!isEmpty(trim(payload.soql default "")))
+    queryComplexity(payload.soql)
+else
+    { score: 0, warnings: [] }]]></ee:set-variable>
+                <ee:set-variable variableName="rawSoql"><![CDATA[#[payload.soql]]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- Reject invalid queries with detailed errors -->
+        <choice>
+            <when expression="#[vars.queryValidation.valid != true]">
+                <raise-error type="SALESFORCE:INVALID_INPUT"
+                             description="#['SOQL Validation Failed: ' ++ (vars.queryValidation.errors joinBy '; ')]" />
+            </when>
+        </choice>
+
+        <!-- Execute SOQL against Salesforce -->
+        <salesforce:query config-ref="salesforce-config">
+            <salesforce:salesforce-query>#[vars.queryValidation.sanitized]</salesforce:salesforce-query>
+        </salesforce:query>
+
+        <!-- Reset circuit breaker on success -->
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <!-- Normalize response -->
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+var records = payload map ((item) -> item mapObject ((v, k) ->
+    if (k as String == "attributes") {} else {(k): v}
+))
+---
+{
+    success: true,
+    data: {
+        records: records,
+        totalSize: sizeOf(records)
+    },
+    metadata: {
+        operation: "query",
+        recordCount: sizeOf(records),
+        timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSXXX"},
+        correlationId: correlationId,
+        apiVersion: p('sfdc.api.version'),
+        queryComplexity: vars.queryComplexity
+    }
+}]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    "Content-Type": "application/json",
+    "X-Correlation-Id": correlationId,
+    "X-Query-Complexity": vars.queryComplexity.score as String default "0"
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- Audit log -->
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'query', 'SOQL', sizeOf(payload.data.records default []), vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         POST /search — Universal SOSL Search
+         Body: { "sosl": "FIND {Acme} IN ALL FIELDS RETURNING Account(Id, Name)" }
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="post:\search:application\json:sf-sapi-config">
+        <flow-ref name="sf-circuit-breaker-check" />
+
+        <validation:is-not-blank-string
+            value="#[payload.sosl default '']"
+            message="SOSL search string is required and cannot be blank" />
+
+        <salesforce:search config-ref="salesforce-config">
+            <salesforce:search-string>#[payload.sosl]</salesforce:search-string>
+        </salesforce:search>
+
+        <flow-ref name="sf-circuit-breaker-reset" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::SfdcResponseNormalizer
+---
+wrapSearchResponse(payload, correlationId, p('sfdc.api.version'))]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{ "Content-Type": "application/json", "X-Correlation-Id": correlationId }]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <logger level="INFO"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::AuditLogger
+---
+buildAuditLog('INFO', 'search', 'SOSL', sizeOf(payload.data.records default []), vars.requestStartTime, correlationId, attributes)]" />
+    </flow>
+
+</mule>

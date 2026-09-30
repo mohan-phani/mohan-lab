@@ -1,0 +1,13 @@
+{
+  "minMuleVersion": "4.9.4",
+  "requiredProduct": "MULE_EE",
+  "classLoaderModelLoaderDescriptor": {
+    "id": "mule",
+    "attributes": {
+      "exportedResources": [
+        "api/*",
+        "dwl/*"
+      ]
+    }
+  }
+}
