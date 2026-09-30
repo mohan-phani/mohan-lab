@@ -1,0 +1,14 @@
+# ═══════════════════════════════════════════════════════════
+# PROD Environment Configuration
+# ═══════════════════════════════════════════════════════════
+
+env: "prod"
+
+http:
+  host: "0.0.0.0"
+  port: "${http.port}"
+
+downstream:
+  host: "${downstream.host}"
+  port: "${downstream.port}"
+  timeout: 30000

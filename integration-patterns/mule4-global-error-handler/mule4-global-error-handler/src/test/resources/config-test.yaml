@@ -1,0 +1,14 @@
+# ═══════════════════════════════════════════════════════════
+# Test Environment Configuration (MUnit)
+# ═══════════════════════════════════════════════════════════
+
+env: "test"
+
+http:
+  host: "0.0.0.0"
+  port: "8081"
+
+downstream:
+  host: "localhost"
+  port: "443"
+  timeout: 5000

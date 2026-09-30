@@ -1,0 +1,11 @@
+# ═══════════════════════════════════════════════════════════
+# Common Configuration — shared across all environments
+# ═══════════════════════════════════════════════════════════
+
+app:
+  version: "1.0.0"
+  name: "mule4-global-error-handler"
+
+# Default downstream timeout (ms) — override per environment
+downstream:
+  timeout: 30000

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+
+    <Appenders>
+        <!-- Console Appender — structured JSON for log aggregators -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%-5p %d [%t] [correlationId=%X{correlationId}] %c - %m%n" />
+        </Console>
+
+        <!-- Rolling file for persistent logs -->
+        <RollingFile name="RollingFile"
+                     fileName="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}mule4-global-error-handler.log"
+                     filePattern="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}mule4-global-error-handler-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="%-5p %d [%t] [correlationId=%X{correlationId}] %c - %m%n" />
+            <Policies>
+                <SizeBasedTriggeringPolicy size="10 MB" />
+                <TimeBasedTriggeringPolicy />
+            </Policies>
+            <DefaultRolloverStrategy max="30" />
+        </RollingFile>
+    </Appenders>
+
+    <Loggers>
+        <!-- Application logger -->
+        <AsyncLogger name="com.mohanphani" level="INFO" />
+
+        <!-- Mule runtime — reduce noise -->
+        <AsyncLogger name="org.mule.runtime.core" level="WARN" />
+        <AsyncLogger name="org.mule.extension" level="WARN" />
+
+        <!-- HTTP connector debug (enable for troubleshooting) -->
+        <AsyncLogger name="org.mule.extension.http" level="WARN" />
+
+        <!-- APIkit -->
+        <AsyncLogger name="org.mule.module.apikit" level="INFO" />
+
+        <!-- DataWeave -->
+        <AsyncLogger name="org.mule.weave" level="WARN" />
+
+        <AsyncRoot level="INFO">
+            <AppenderRef ref="Console" />
+            <AppenderRef ref="RollingFile" />
+        </AsyncRoot>
+    </Loggers>
+
+</Configuration>

@@ -1,0 +1,109 @@
+#%RAML 1.0
+title: Error Handler Demo API
+version: v1
+baseUri: http://localhost:8081/api/{version}
+
+description: |
+  Demo API to showcase the global error handler in action.
+  Each endpoint deliberately triggers a different error category.
+
+types:
+  User:
+    type: object
+    properties:
+      id: integer
+      name: string
+      email: string
+
+  ErrorResponse:
+    type: object
+    properties:
+      success: boolean
+      error:
+        type: object
+        properties:
+          status: integer
+          category: string
+          title: string
+          detail: string
+          errorType: string
+          correlationId: string
+          timestamp: string
+
+/users:
+  get:
+    description: Returns a list of users (happy path demo)
+    responses:
+      200:
+        body:
+          application/json:
+            type: User[]
+            example: |
+              [
+                {"id": 1, "name": "Alice", "email": "alice@example.com"},
+                {"id": 2, "name": "Bob", "email": "bob@example.com"}
+              ]
+
+  /{userId}:
+    get:
+      description: Get user by ID. Returns 404 if not found.
+      responses:
+        200:
+          body:
+            application/json:
+              type: User
+        404:
+          body:
+            application/json:
+              type: ErrorResponse
+
+  post:
+    description: Create a user. Returns 400 on validation failure.
+    body:
+      application/json:
+        type: User
+    responses:
+      201:
+        body:
+          application/json:
+            type: User
+      400:
+        body:
+          application/json:
+            type: ErrorResponse
+
+/health:
+  get:
+    description: Health check endpoint
+    responses:
+      200:
+        body:
+          application/json:
+            example: |
+              {"status": "UP", "timestamp": "2026-09-30T10:00:00.000+05:30"}
+
+/demo-errors:
+  /timeout:
+    get:
+      description: Simulates a downstream timeout (504)
+      responses:
+        504:
+          body:
+            application/json:
+              type: ErrorResponse
+  /server-error:
+    get:
+      description: Simulates an internal server error (500)
+      responses:
+        500:
+          body:
+            application/json:
+              type: ErrorResponse
+  /bad-gateway:
+    get:
+      description: Simulates a bad gateway error (502)
+      responses:
+        502:
+          body:
+            application/json:
+              type: ErrorResponse

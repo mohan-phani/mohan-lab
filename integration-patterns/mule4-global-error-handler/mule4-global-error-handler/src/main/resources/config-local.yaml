@@ -1,0 +1,14 @@
+# ═══════════════════════════════════════════════════════════
+# Local Development Configuration
+# ═══════════════════════════════════════════════════════════
+
+env: "local"
+
+http:
+  host: "0.0.0.0"
+  port: "8081"
+
+downstream:
+  host: "jsonplaceholder.typicode.com"
+  port: "443"
+  timeout: 10000

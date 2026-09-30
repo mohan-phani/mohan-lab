@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd">
+
+    <!-- ════════════════════════════════════════════════════════════════
+         CONFIGURATION PROPERTIES
+         Loaded per environment: dev, sit, uat, prod
+         ════════════════════════════════════════════════════════════════ -->
+    <configuration-properties file="config-${env}.yaml" />
+    <configuration-properties file="config-common.yaml" />
+
+    <!-- ════════════════════════════════════════════════════════════════
+         HTTP LISTENER — Shared across all API flows
+         ════════════════════════════════════════════════════════════════ -->
+    <http:listener-config name="http-listener-config">
+        <http:listener-connection
+            host="${http.host}"
+            port="${http.port}" />
+    </http:listener-config>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         HTTP REQUEST — For calling downstream services (demo)
+         ════════════════════════════════════════════════════════════════ -->
+    <http:request-config name="http-request-config">
+        <http:request-connection
+            host="${downstream.host}"
+            port="${downstream.port}"
+            protocol="HTTPS">
+            <http:client-socket-properties>
+                <sockets:tcp-client-socket-properties
+                    xmlns:sockets="http://www.mulesoft.org/schema/mule/sockets"
+                    connectionTimeout="10000"
+                    clientTimeout="${downstream.timeout}" />
+            </http:client-socket-properties>
+        </http:request-connection>
+    </http:request-config>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         APIKIT ROUTER CONFIG
+         ════════════════════════════════════════════════════════════════ -->
+    <apikit:config name="demo-api-config"
+                   raml="api/demo-api.raml"
+                   outboundHeadersMapName="outboundHeaders"
+                   httpStatusVarName="httpStatus" />
+
+</mule>

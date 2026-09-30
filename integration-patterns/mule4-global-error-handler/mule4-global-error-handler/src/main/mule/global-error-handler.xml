@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <description>
+        Global Error Handler — reusable error handling strategy.
+        Categorizes Mule errors into HTTP-appropriate responses with
+        structured JSON payloads, correlation tracking, and contextual logging.
+
+        USAGE: Reference this in any flow via defaultErrorHandler-ref="global-error-handler"
+        or inside a flow's error-handler element with ref="global-error-handler".
+    </description>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GLOBAL ERROR HANDLER
+         ════════════════════════════════════════════════════════════════ -->
+    <error-handler name="global-error-handler">
+
+        <!-- ──────────────────────────────────────────────────────────
+             400 BAD REQUEST — Client sent invalid data
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="APIKIT:BAD_REQUEST, VALIDATION:INVALID_BOOLEAN, VALIDATION:INVALID_NUMBER, VALIDATION:INVALID_VALUE, VALIDATION:MISMATCH, VALIDATION:NULL, VALIDATION:NOT_NULL, EXPRESSION"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="400" />
+            <set-variable variableName="errorCategory" value="BAD_REQUEST" />
+            <set-variable variableName="errorTitle" value="Bad Request" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             401 UNAUTHORIZED — Missing or invalid credentials
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="HTTP:UNAUTHORIZED, APIKIT:NOT_ACCEPTABLE, CLIENT-SECURITY"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="401" />
+            <set-variable variableName="errorCategory" value="UNAUTHORIZED" />
+            <set-variable variableName="errorTitle" value="Unauthorized" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             403 FORBIDDEN — Authenticated but not allowed
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="HTTP:FORBIDDEN, SERVER-SECURITY"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="403" />
+            <set-variable variableName="errorCategory" value="FORBIDDEN" />
+            <set-variable variableName="errorTitle" value="Forbidden" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             404 NOT FOUND — Resource does not exist
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="APIKIT:NOT_FOUND, HTTP:NOT_FOUND"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="404" />
+            <set-variable variableName="errorCategory" value="NOT_FOUND" />
+            <set-variable variableName="errorTitle" value="Resource Not Found" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             405 METHOD NOT ALLOWED
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="APIKIT:METHOD_NOT_ALLOWED"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="405" />
+            <set-variable variableName="errorCategory" value="METHOD_NOT_ALLOWED" />
+            <set-variable variableName="errorTitle" value="Method Not Allowed" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             406 NOT ACCEPTABLE
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="APIKIT:NOT_ACCEPTABLE"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="406" />
+            <set-variable variableName="errorCategory" value="NOT_ACCEPTABLE" />
+            <set-variable variableName="errorTitle" value="Not Acceptable" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             409 CONFLICT — Duplicate or state conflict
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="DUPLICATE_MESSAGE, ROUTING"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="409" />
+            <set-variable variableName="errorCategory" value="CONFLICT" />
+            <set-variable variableName="errorTitle" value="Conflict" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             415 UNSUPPORTED MEDIA TYPE
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="APIKIT:UNSUPPORTED_MEDIA_TYPE"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="415" />
+            <set-variable variableName="errorCategory" value="UNSUPPORTED_MEDIA_TYPE" />
+            <set-variable variableName="errorTitle" value="Unsupported Media Type" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             429 TOO MANY REQUESTS — Rate limiting
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="HTTP:TOO_MANY_REQUESTS"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="429" />
+            <set-variable variableName="errorCategory" value="TOO_MANY_REQUESTS" />
+            <set-variable variableName="errorTitle" value="Too Many Requests" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             502 BAD GATEWAY — Downstream returned garbage
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="HTTP:BAD_GATEWAY, HTTP:PARSING"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="502" />
+            <set-variable variableName="errorCategory" value="BAD_GATEWAY" />
+            <set-variable variableName="errorTitle" value="Bad Gateway" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             503 SERVICE UNAVAILABLE — Downstream is down
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="HTTP:SERVICE_UNAVAILABLE, HTTP:CONNECTIVITY, RETRY_EXHAUSTED, REDELIVERY_EXHAUSTED"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="503" />
+            <set-variable variableName="errorCategory" value="SERVICE_UNAVAILABLE" />
+            <set-variable variableName="errorTitle" value="Service Unavailable" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             504 GATEWAY TIMEOUT — Downstream too slow
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="HTTP:TIMEOUT, SOCKET:CONNECTIVITY"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="504" />
+            <set-variable variableName="errorCategory" value="GATEWAY_TIMEOUT" />
+            <set-variable variableName="errorTitle" value="Gateway Timeout" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+        <!-- ──────────────────────────────────────────────────────────
+             500 INTERNAL SERVER ERROR — Catch-all for anything else
+             ────────────────────────────────────────────────────────── -->
+        <on-error-propagate
+            type="ANY"
+            enableNotifications="true"
+            logException="true">
+            <set-variable variableName="httpStatus" value="500" />
+            <set-variable variableName="errorCategory" value="INTERNAL_SERVER_ERROR" />
+            <set-variable variableName="errorTitle" value="Internal Server Error" />
+            <flow-ref name="build-error-response" />
+        </on-error-propagate>
+
+    </error-handler>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         BUILD ERROR RESPONSE — Shared sub-flow
+         Constructs the structured JSON response and sets HTTP status.
+         ════════════════════════════════════════════════════════════════ -->
+    <sub-flow name="build-error-response">
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+import * from dwl::ErrorResponseBuilder
+---
+buildErrorResponse(
+    vars.httpStatus as Number,
+    vars.errorCategory,
+    vars.errorTitle,
+    error,
+    correlationId
+)]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="outboundHeaders"><![CDATA[%dw 2.0
+output application/java
+---
+{
+    "Content-Type": "application/json",
+    "X-Correlation-Id": correlationId
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <!-- Structured log entry for observability (Splunk/ELK/Datadog) -->
+        <logger level="ERROR"
+                message="#[%dw 2.0
+output application/json
+import * from dwl::ErrorLogBuilder
+---
+buildErrorLog(
+    vars.httpStatus as Number,
+    vars.errorCategory,
+    error,
+    correlationId,
+    attributes
+)]" />
+
+        <!-- Set HTTP status code and headers -->
+        <set-variable variableName="httpStatus" value="#[vars.httpStatus]" />
+    </sub-flow>
+
+</mule>

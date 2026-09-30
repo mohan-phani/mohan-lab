@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <munit:config name="global-error-handler-test.xml" />
+
+    <!-- Test HTTP config for making requests against the running app -->
+    <http:request-config name="test-http-request-config">
+        <http:request-connection host="0.0.0.0" port="${http.port}" />
+    </http:request-config>
+
+    <!-- ──────────────────────────────────────────────────────────
+         TEST: Happy path — GET /users returns 200
+         ────────────────────────────────────────────────────────── -->
+    <munit:test name="get-users-returns-200"
+                description="GET /users should return 200 with user list">
+        <munit:execution>
+            <http:request config-ref="test-http-request-config"
+                          method="GET" path="/api/v1/users" />
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[attributes.statusCode]"
+                is="#[MunitTools::equalTo(200)]" />
+            <munit-tools:assert-that
+                expression="#[sizeOf(payload)]"
+                is="#[MunitTools::greaterThan(0)]" />
+        </munit:validation>
+    </munit:test>
+
+    <!-- ──────────────────────────────────────────────────────────
+         TEST: 404 — GET /users/999 triggers NOT_FOUND
+         ────────────────────────────────────────────────────────── -->
+    <munit:test name="get-user-not-found-returns-404"
+                description="GET /users/999 should return 404 with structured error"
+                expectedErrorType="HTTP:BAD_REQUEST">
+        <munit:execution>
+            <http:request config-ref="test-http-request-config"
+                          method="GET" path="/api/v1/users/999">
+                <http:response-validator>
+                    <http:success-status-code-validator values="404" />
+                </http:response-validator>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[attributes.statusCode]"
+                is="#[MunitTools::equalTo(404)]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.category]"
+                is="#[MunitTools::equalTo('NOT_FOUND')]" />
+            <munit-tools:assert-that
+                expression="#[payload.success]"
+                is="#[MunitTools::equalTo(false)]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.correlationId]"
+                is="#[MunitTools::notNullValue()]" />
+        </munit:validation>
+    </munit:test>
+
+    <!-- ──────────────────────────────────────────────────────────
+         TEST: 400 — POST /users with missing email
+         ────────────────────────────────────────────────────────── -->
+    <munit:test name="post-user-bad-request-returns-400"
+                description="POST /users with missing email should return 400"
+                expectedErrorType="HTTP:BAD_REQUEST">
+        <munit:execution>
+            <http:request config-ref="test-http-request-config"
+                          method="POST" path="/api/v1/users">
+                <http:body><![CDATA[#[output application/json --- {id: 1, name: "Test"}]]]></http:body>
+                <http:headers><![CDATA[#[{"Content-Type": "application/json"}]]]></http:headers>
+                <http:response-validator>
+                    <http:success-status-code-validator values="400" />
+                </http:response-validator>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[attributes.statusCode]"
+                is="#[MunitTools::equalTo(400)]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.category]"
+                is="#[MunitTools::equalTo('BAD_REQUEST')]" />
+        </munit:validation>
+    </munit:test>
+
+    <!-- ──────────────────────────────────────────────────────────
+         TEST: 504 — GET /demo-errors/timeout
+         ────────────────────────────────────────────────────────── -->
+    <munit:test name="demo-timeout-returns-504"
+                description="GET /demo-errors/timeout should return 504"
+                expectedErrorType="HTTP:BAD_REQUEST">
+        <munit:execution>
+            <http:request config-ref="test-http-request-config"
+                          method="GET" path="/api/v1/demo-errors/timeout">
+                <http:response-validator>
+                    <http:success-status-code-validator values="504" />
+                </http:response-validator>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[attributes.statusCode]"
+                is="#[MunitTools::equalTo(504)]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.category]"
+                is="#[MunitTools::equalTo('GATEWAY_TIMEOUT')]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.timestamp]"
+                is="#[MunitTools::notNullValue()]" />
+        </munit:validation>
+    </munit:test>
+
+    <!-- ──────────────────────────────────────────────────────────
+         TEST: 500 — GET /demo-errors/server-error
+         ────────────────────────────────────────────────────────── -->
+    <munit:test name="demo-server-error-returns-500"
+                description="GET /demo-errors/server-error should return 500"
+                expectedErrorType="HTTP:BAD_REQUEST">
+        <munit:execution>
+            <http:request config-ref="test-http-request-config"
+                          method="GET" path="/api/v1/demo-errors/server-error">
+                <http:response-validator>
+                    <http:success-status-code-validator values="500" />
+                </http:response-validator>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[attributes.statusCode]"
+                is="#[MunitTools::equalTo(500)]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.category]"
+                is="#[MunitTools::equalTo('INTERNAL_SERVER_ERROR')]" />
+        </munit:validation>
+    </munit:test>
+
+    <!-- ──────────────────────────────────────────────────────────
+         TEST: Health check returns 200
+         ────────────────────────────────────────────────────────── -->
+    <munit:test name="health-check-returns-200"
+                description="GET /health should return 200 with UP status">
+        <munit:execution>
+            <http:request config-ref="test-http-request-config"
+                          method="GET" path="/api/v1/health" />
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[attributes.statusCode]"
+                is="#[MunitTools::equalTo(200)]" />
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo('UP')]" />
+        </munit:validation>
+    </munit:test>
+
+    <!-- ──────────────────────────────────────────────────────────
+         TEST: Error response structure validation
+         Ensures ALL required fields are present
+         ────────────────────────────────────────────────────────── -->
+    <munit:test name="error-response-has-required-fields"
+                description="Error responses must contain all RFC 7807-inspired fields"
+                expectedErrorType="HTTP:BAD_REQUEST">
+        <munit:execution>
+            <http:request config-ref="test-http-request-config"
+                          method="GET" path="/api/v1/demo-errors/server-error">
+                <http:response-validator>
+                    <http:success-status-code-validator values="500" />
+                </http:response-validator>
+            </http:request>
+        </munit:execution>
+        <munit:validation>
+            <!-- Validate complete error structure -->
+            <munit-tools:assert-that
+                expression="#[payload.error.status]"
+                is="#[MunitTools::notNullValue()]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.category]"
+                is="#[MunitTools::notNullValue()]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.title]"
+                is="#[MunitTools::notNullValue()]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.detail]"
+                is="#[MunitTools::notNullValue()]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.errorType]"
+                is="#[MunitTools::notNullValue()]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.correlationId]"
+                is="#[MunitTools::notNullValue()]" />
+            <munit-tools:assert-that
+                expression="#[payload.error.timestamp]"
+                is="#[MunitTools::notNullValue()]" />
+        </munit:validation>
+    </munit:test>
+
+</mule>

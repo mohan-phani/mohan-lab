@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+        http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd">
+
+    <description>
+        Demo API — Shows how to plug the global error handler into any flow.
+        Each endpoint exercises a different error scenario.
+    </description>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         MAIN ROUTER FLOW
+         The key line: error-handler ref="global-error-handler"
+         That's ALL you need to plug it in.
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="demo-api-main">
+        <http:listener config-ref="http-listener-config" path="/api/v1/*">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:headers>#[vars.outboundHeaders default {}]</http:headers>
+            </http:error-response>
+        </http:listener>
+
+        <apikit:router config-ref="demo-api-config" />
+
+        <!-- ★ THIS IS THE PLUG-IN POINT ★ -->
+        <error-handler ref="global-error-handler" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /users — Happy path
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\users:demo-api-config">
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+[
+    {id: 1, name: "Alice Johnson", email: "alice@example.com"},
+    {id: 2, name: "Bob Smith", email: "bob@example.com"},
+    {id: 3, name: "Charlie Brown", email: "charlie@example.com"}
+]]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /users/{userId} — 404 demo
+         Raises NOT_FOUND for any userId > 3
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\users\(userId):demo-api-config">
+        <set-variable variableName="userId" value="#[attributes.uriParams.userId]" />
+
+        <choice>
+            <when expression="#[vars.userId as Number &lt;= 3]">
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var users = {
+    "1": {id: 1, name: "Alice Johnson", email: "alice@example.com"},
+    "2": {id: 2, name: "Bob Smith", email: "bob@example.com"},
+    "3": {id: 3, name: "Charlie Brown", email: "charlie@example.com"}
+}
+---
+users[vars.userId as String]]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </when>
+            <otherwise>
+                <raise-error type="APIKIT:NOT_FOUND"
+                             description="#['User with ID ' ++ (vars.userId as String) ++ ' was not found']" />
+            </otherwise>
+        </choice>
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         POST /users — 400 validation demo
+         Validates required fields, raises BAD_REQUEST on failure
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="post:\users:application\json:demo-api-config">
+        <!-- Validate email is present and non-blank -->
+        <validation:is-not-blank-string
+            value="#[payload.email default '']"
+            message="Email is required and cannot be blank" />
+
+        <!-- Validate name is present -->
+        <validation:is-not-blank-string
+            value="#[payload.name default '']"
+            message="Name is required and cannot be blank" />
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    id: randomInt(1000),
+    name: payload.name,
+    email: payload.email
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <set-variable variableName="httpStatus" value="201" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /health — Simple health check
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\health:demo-api-config">
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    status: "UP",
+    application: "mule4-global-error-handler",
+    version: p('app.version') default "1.0.0",
+    environment: p('env') default "local",
+    timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSXXX"}
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /demo-errors/timeout — Simulates downstream timeout
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\demo-errors\timeout:demo-api-config">
+        <raise-error type="HTTP:TIMEOUT"
+                     description="Downstream service did not respond within 30000ms" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /demo-errors/server-error — Simulates 500
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\demo-errors\server-error:demo-api-config">
+        <raise-error type="MULE:EXPRESSION"
+                     description="Unexpected null reference while processing order #12345" />
+    </flow>
+
+    <!-- ════════════════════════════════════════════════════════════════
+         GET /demo-errors/bad-gateway — Simulates 502
+         ════════════════════════════════════════════════════════════════ -->
+    <flow name="get:\demo-errors\bad-gateway:demo-api-config">
+        <raise-error type="HTTP:BAD_GATEWAY"
+                     description="Downstream returned malformed JSON response" />
+    </flow>
+
+</mule>

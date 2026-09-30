@@ -1,0 +1,14 @@
+# ═══════════════════════════════════════════════════════════
+# DEV Environment Configuration
+# ═══════════════════════════════════════════════════════════
+
+env: "dev"
+
+http:
+  host: "0.0.0.0"
+  port: "${http.port}"
+
+downstream:
+  host: "${downstream.host}"
+  port: "${downstream.port}"
+  timeout: 15000
