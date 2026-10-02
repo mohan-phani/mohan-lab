@@ -1,0 +1,31 @@
+{
+  "_comment": "Claude Desktop config example. Copy the 'salesforce' block into ~/Library/Application Support/Claude/claude_desktop_config.json (macOS) or %APPDATA%\\Claude\\claude_desktop_config.json (Windows).",
+  "mcpServers": {
+    "salesforce": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/salesforce-mcp-server/dist/index.js"],
+      "env": {
+        "SF_AUTH_MODE": "password",
+        "SF_LOGIN_URL": "https://login.salesforce.com",
+        "SF_USERNAME": "your-username@example.com",
+        "SF_PASSWORD": "your-password",
+        "SF_SECURITY_TOKEN": "your-security-token",
+        "SF_API_VERSION": "62.0",
+        "LOG_LEVEL": "info"
+      }
+    },
+    "salesforce-jwt": {
+      "_comment": "JWT Bearer flow for production orgs",
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/salesforce-mcp-server/dist/index.js"],
+      "env": {
+        "SF_AUTH_MODE": "jwt",
+        "SF_LOGIN_URL": "https://login.salesforce.com",
+        "SF_CLIENT_ID": "your-connected-app-consumer-key",
+        "SF_USERNAME": "api-user@yourcompany.com",
+        "SF_PRIVATE_KEY_PATH": "/ABSOLUTE/PATH/TO/certs/server.key",
+        "SF_API_VERSION": "62.0"
+      }
+    }
+  }
+}
