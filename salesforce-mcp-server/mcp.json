@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "salesforce": {
+      "command": "node",
+      "args": ["/FULL/PATH/TO/salesforce-mcp-server/dist/index.js"],
+      "env": {
+        "SF_AUTH_MODE": "oauth",
+        "SF_CLIENT_ID": "your-connected-app-consumer-key",
+        "SF_CLIENT_SECRET": "your-connected-app-consumer-secret",
+        "SF_LOGIN_URL": "https://login.salesforce.com"
+      }
+    },
+    "salesforce-jwt": {
+      "command": "node",
+      "args": ["/FULL/PATH/TO/salesforce-mcp-server/dist/index.js"],
+      "env": {
+        "SF_AUTH_MODE": "jwt",
+        "SF_CLIENT_ID": "your-connected-app-consumer-key",
+        "SF_USERNAME": "your-username@example.com",
+        "SF_PRIVATE_KEY_PATH": "/FULL/PATH/TO/certs/server.key",
+        "SF_LOGIN_URL": "https://login.salesforce.com"
+      }
+    }
+  }
+}
